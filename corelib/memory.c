@@ -20,16 +20,12 @@
 #include <ck_pr.h>
 #include <ck_ring.h>
 
-struct preallocation{
-  void *preallocated_start;
-  void *preallocated_end;
-  ck_ring_t preallocated_ring;
-};
-
 struct mem_type {
   ph_memtype_def_t def;
   ph_counter_scope_t *scope;
-  struct preallocation *preallocation;
+  void *preallocated_start;
+  void *preallocated_end;
+  ck_ring_t preallocated_ring;
   uint8_t first_slot;
 };
 
@@ -83,9 +79,8 @@ static void memory_destroy(void)
       free((char*)memtypes[i].def.facility);
     }
     free((char*)memtypes[i].def.name);
-    if (memtypes[i].preallocation) {
-      free(memtypes[i].preallocation->preallocated_start);
-      free(memtypes[i].preallocation);
+    if (memtypes[i].preallocated_start) {
+      free(memtypes[i].preallocated_start);
     }
   }
 
@@ -267,28 +262,25 @@ ph_result_t ph_mem_preallocate(ph_memtype_t mt, unsigned number_preallocated)
     return PH_ERR;
   }
 
-  struct preallocation *preallocation=malloc(sizeof(struct preallocation));
-  if (!ck_pr_cas_ptr(&mem_type->preallocation, NULL, preallocation)) {
-    //It's not NULL, so there's already been preallocation
-    free(preallocation);
-    return PH_EXISTS;
-  }
-
   aligned_size = mem_type->def.item_size + (mem_type->def.item_size % CK_MD_CACHELINE); //Align on CK_MD_CACHELINE
   preallocation_size = aligned_size * number_preallocated;
   buffer_size = sizeof(void*) * number_preallocated;
   allocated_bytes = preallocation_size + buffer_size;
-  preallocation->preallocated_start = malloc(allocated_bytes);
-  if (preallocation->preallocated_start == NULL) {
-    mem_type->preallocation = NULL;
-    free(preallocation);
+  ptr = malloc(allocated_bytes);
+  if (ptr == NULL) {
     return PH_NOMEM;
   }
 
-  preallocation->preallocated_end = ((char*) preallocation->preallocated_start) + preallocation_size;
-  ck_ring_init(&preallocation->preallocated_ring, preallocation->preallocated_end, number_preallocated);
-  for (ptr = preallocation->preallocated_start; ptr < ((char*) preallocation->preallocated_end); ptr+=aligned_size) {
-    ck_ring_enqueue_spsc(&preallocation->preallocated_ring, ptr);
+  if (!ck_pr_cas_ptr(&mem_type->preallocated_start, NULL, ptr)) {
+    //It's not NULL, so there's already been preallocation
+    free(ptr);
+    return PH_EXISTS;
+  }
+
+  mem_type->preallocated_end = ((char*) mem_type->preallocated_start) + preallocation_size;
+  ck_ring_init(&mem_type->preallocated_ring, mem_type->preallocated_end, number_preallocated);
+  for (ptr = mem_type->preallocated_start; ptr < ((char*) mem_type->preallocated_end); ptr+=aligned_size) {
+    ck_ring_enqueue_spsc(&mem_type->preallocated_ring, ptr);
   }
 
   ph_counter_scope_add(mem_type->scope, SLOT_BYTES, allocated_bytes);
@@ -311,7 +303,7 @@ void *ph_mem_alloc(ph_memtype_t mt)
     return NULL;
   }
 
-  if (mem_type->preallocation && ck_ring_dequeue_spmc(&mem_type->preallocation->preallocated_ring, &ptr)) {
+  if (mem_type && ck_ring_dequeue_spmc(&mem_type->preallocated_ring, &ptr)) {
     malloced_size = 0;
   } else {
     malloced_size = mem_type->def.item_size;
@@ -432,9 +424,9 @@ void ph_mem_free(ph_memtype_t mt, void *ptr)
     }
   }
 
-  if (mem_type->preallocation && ptr >= mem_type->preallocation->preallocated_start && ptr < mem_type->preallocation->preallocated_end){
+  if (mem_type && ptr >= mem_type->preallocated_start && ptr < mem_type->preallocated_end){
     size = 0;
-    if (!ck_ring_enqueue_spmc(&mem_type->preallocation->preallocated_ring, ptr)) {
+    if (!ck_ring_enqueue_spmc(&mem_type->preallocated_ring, ptr)) {
       abort();
     }
   } else {
