@@ -427,7 +427,7 @@ void ph_mem_free(ph_memtype_t mt, void *ptr)
   if (mem_type && ptr >= mem_type->preallocated_start && ptr < mem_type->preallocated_end){
     size = 0;
     if (!ck_ring_enqueue_spmc(&mem_type->preallocated_ring, ptr)) {
-      abort();
+      ph_panic("Unable to push freed pointer into ring queue for %s/%s, indicating that more values were freed than were allocated.", mem_type->def.facility, mem_type->def.name);
     }
   } else {
     free(ptr);
