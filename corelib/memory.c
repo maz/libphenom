@@ -274,7 +274,7 @@ ph_result_t ph_mem_preallocate(ph_memtype_t mt, unsigned number_preallocated)
     return PH_EXISTS;
   }
 
-  aligned_size = mem_type->def.item_size + (mem_type->def.item_size % 8); //Align on an 8-byte boundary
+  aligned_size = mem_type->def.item_size + (mem_type->def.item_size % CK_MD_CACHELINE); //Align on CK_MD_CACHELINE
   preallocation_size = aligned_size * number_preallocated;
   buffer_size = sizeof(void*) * number_preallocated;
   allocated_bytes = preallocation_size + buffer_size;
