@@ -434,7 +434,7 @@ void ph_mem_free(ph_memtype_t mt, void *ptr)
 
   if (mem_type->preallocation && ptr >= mem_type->preallocation->preallocated_start && ptr < mem_type->preallocation->preallocated_end){
     size = 0;
-    if (!ck_ring_enqueue_spmc(&mem_type->preallocation->preallocated_ring, &ptr)) {
+    if (!ck_ring_enqueue_spmc(&mem_type->preallocation->preallocated_ring, ptr)) {
       abort();
     }
   } else {
